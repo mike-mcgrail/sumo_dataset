@@ -216,7 +216,7 @@ def main():
                 print(json.dumps(ds_event_dict))
 
         except:
-            print("unable to parse josn")
+            print("unable to parse json")
 
 if __name__ == "__main__":
     main()
