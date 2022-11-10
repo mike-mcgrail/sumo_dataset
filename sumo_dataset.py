@@ -1,8 +1,8 @@
 #####
 # Source: https://github.com/SumoLogic/sumologic-python-sdk/blob/main/scripts/search-job-messages.py
 # Functions: 
-#   1. [optional] Query SumoLogic API
-#   2. Parse JSON
+#   1. Query SumoLogic API and return JSON, with optional timebased checkpointing -OR- parse JSON passed to script
+#   2. Create DataSet payload
 #   3. [optional] Send JSON to DataSet API
 #
 # Python3 requirements:
@@ -11,26 +11,33 @@
 #   3. https://pypi.org/project/python-dateutil/
 #
 # Setup:
-#   1. pip3 install requirements.txt
-#   2. Update sumoConfig below with ID and key
-#   3. Update datasetConfig below with token
-#   4. Update sumoSearch below with options (q for query, timeZome, LIMIT)
-#   5. If using checkpointing, ensure script has write permissions in current directory to create file
+#   1. ensure script has write access to current directory to create time checkpoint file
+#   2. pip3 install requirements.txt
+#   3. Update sumoConfig, sumoSearch, datasetConfig below to match environment (see TODO: comments below)
 #
-# Usage Examples:
+# Usage:
+#      python3 sumo_dataset.py sumo <sumo || json> --checkpoint <no || yes> --payload <json string> --dataset <no || yes>
+#                              /\                  /\                       /\                      /\
+#                              |                   |                        |                       |
+#                              required            optional,default=no,   optional,default unused   optional,default=yes
+#                                                  start=midnight,
+#                                                  end=run time
+#
+# Examples:
 #   1. Query SumoLogic and send results to DataSet:
 #      python3 sumo_dataset.py sumo
-#   2. Query SumoLogic, update checkpoint (helpful for recurring cron job) and send to DataSet:
+#   2. Query SumoLogic, update checkpoint (helpful for recurring cron job) and send to DataSet: (note: if checkpoint is not set, times default to earlist=midnight latest=execution time)
 #      python3 sumo_dataset.py --checkpoint yes
-#   3. Instead of SumoLogic, provide json directly: 
+#   3. Instead of SumoLogic, pass JSON to script:
 #      python3 sumo_dataset.py json --payload '{ "firstName": "mike", "lastName": "mcgrail" }'
 #   4. Provide json directly and view payload without sending to DataSet:
 #      python3 sumo_dataset.py json --payload '{ "firstName": "mike", "lastName": "mcgrail" }' --dataset no
 #
-# Known Issues:
-#   1. SumoLogic was defined for a known set of data, needs to be adjusted for differing data sources/field names
-#   2. Using SumoLogic + checkpointing cannot work with future timestamps since now() is used as end
-#   3. JSON sourcesb need to be tested with edge cases
+# Considerations:
+#   1. sumo logic was defined for a known set of data with results returned with | json, may need adjustment
+#   2. DataSet addEvetns API has a payload limit of 6MB. This needs to be considered for SumoLogic query LIMIT number of records
+#   3. Using sumo + checkppoint cannot work with future timestamps since now() is used as end
+#   4. JSON sources likely need to be tested with edge cases
 #####
 
 import json
@@ -44,26 +51,26 @@ import argparse
 from sumologic import SumoLogic
 
 sumoConfig = {
-    "accessId": "<string>",
-    "accessKey": "<string>",
-    "endpoint": "https://api.ca.sumologic.com/api" # For other regions, reference Sumo Logic documentation
+    "accessId": "<string>", #TODO: replace <string> with accessId
+    "accessKey": "<string>", #TODO: replace <string> with accessKey
+    "endpoint": "https://api.ca.sumologic.com/api" #TODO: adjust SumoLogic locale if needed
 }
 
 sumoSearch = {
-    "q": '_sourceCategory=*| json field=_raw "host"',
-    "timeZone": "EST",
+    "q": '_sourceCategory=*| json field=_raw "host"', #TODO: update SumoLogic query as needed, script expects | json results
+    "timeZone": "EST", #TODO: update timeZone as needed
     "byReceiptTime": "false",
-    "delay": 5,
-    "LIMIT": 100
+    "delay": 5, #TODO: adjust delay as needed
+    "LIMIT": 50 #TODO: adjust number of results to return. DataSet addEvents API has a limit of 
 }
 
 datasetConfig = {
-    "endpoint": "https://app.scalyr.com/api/addEvents",
-    "token": "<string>"
+    "endpoint": "https://app.scalyr.com/api/addEvents", #TODO: adjust DataSet locale if needed
+    "token": "<string>" #TODO: replace <string> with DataSet write API key
 }
 
 
-def sumo_search_messages(sumo_start, sumo_end): # Search SumoLogic messages using SDK
+def sumo_search_messages(sumo_start, sumo_end):
     sumo = SumoLogic(sumoConfig["accessId"], sumoConfig["accessKey"], sumoConfig["endpoint"])
     start_time = epoch_to_timestamp(sumo_start)
     end_time = epoch_to_timestamp(sumo_end)
@@ -84,7 +91,7 @@ def sumo_search_messages(sumo_start, sumo_end): # Search SumoLogic messages usin
         return(r)
 
 
-def dataset_create_payload(arg_source): # Create payload for DataSet addEvents API
+def dataset_create_payload(arg_source):
     ds_event_dict = {}
     if arg_source == "sumo":
         ds_event_dict["session"] = "sumoLogic"
@@ -105,7 +112,7 @@ def dataset_create_payload(arg_source): # Create payload for DataSet addEvents A
     return ds_event_dict 
 
 
-def dataset_update_payload(ds_event_dict, raw): # Append events to DataSet payload
+def dataset_update_payload(ds_event_dict, raw):
     ts = timestamp_to_epoch(str(raw["timestamp"]))
     timestamp = ts * 1000000000
     ds_event_dict["events"].append(
@@ -184,7 +191,7 @@ def main():
                     if args.checkpoint == 'yes': # If updating checkpoint
                         if ts > sumo_times["start"]:
                             sumo_times["start"] = ts # Set largest start time
-                            sumo_times["end"] = timestamp_to_epoch(str(datetime.date.today())) # Set current time as end time
+                            sumo_times["start"] = timestamp_to_epoch(str(datetime.date.today())) # Set current time as end time
                             write_time_file(sumo_times)
                     
                     dataset_update_payload(ds_event_dict, raw) # Add message to payload
